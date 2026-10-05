@@ -1,0 +1,59 @@
+# Ephemio host service
+
+The deployed POC runs Python 3.12 and aiohttp 3.14.3. `service.py` has four roles:
+
+- `worker`: private Unix-socket API, Docker lifecycle, durable SQLite state and expiry.
+- `gateway`: signed host API, single-use ticket exchange and authorized HTTP/WebSocket proxy.
+- `sync`: authenticated reconciliation with the PHP portal every 15 seconds.
+- `sweep`: expiry/recovery fallback when the worker is not holding its supervisor lock.
+
+Systemd units, an Nginx virtual host and bridge-scoped firewall rules are included.
+The firewall template contains the first host's public IP; adapt it for each new
+host. Container IPv6 is disabled. Existing project networks are outside these rules.
+
+Private configuration lives at `/etc/ephemio/config.json` (root:ephemio, mode 0640):
+
+```json
+{
+  "host_id": "host-0002",
+  "host_url": "https://host-0002.ephemio.com",
+  "portal_url": "https://ephemio.com",
+  "portal_origins": ["https://ephemio.com", "https://www.ephemio.com"],
+  "signing_key": "GENERATE_A_SEPARATE_RANDOM_SECRET_FOR_EACH_HOST",
+  "image": "lscr.io/linuxserver/webtop@sha256:TESTED_DIGEST",
+  "state": "/var/lib/ephemio",
+  "gateway_state": "/var/lib/ephemio-gateway",
+  "socket": "/run/ephemio/worker.sock",
+  "slots": 1,
+  "port": 8090
+}
+```
+
+The gateway has no Docker socket. Its Unix socket access is restricted to the
+`ephemio` group. The worker has Docker/host privileges; customers never receive
+host SSH credentials or access to these files.
+
+`portal_url` is the backend reconciliation endpoint. `portal_origins` explicitly
+lists browser origins allowed to exchange tickets, including the portal's `www`
+alias. Renewal messages target the validated requesting origin. Other origins,
+including missing or `null` origins, are rejected before ticket consumption.
+
+## Operations
+
+```bash
+sudo systemctl status ephemio-worker ephemio-gateway ephemio-sync ephemio-sweep.timer
+sudo journalctl -u ephemio-worker -u ephemio-gateway -u ephemio-sync --since '10 minutes ago'
+sudo systemctl restart ephemio-worker ephemio-gateway ephemio-sync
+sudo /opt/ephemio-venv/bin/python /opt/ephemio/tests/test_security.py
+```
+
+Stopping the worker stops dependent services; the independent sweep timer keeps
+checking owned desktop resources. A deleted session cannot be recreated with
+its original ID. Containers, volumes and networks require ownership labels before
+removal. Avoid global prune commands on this shared host.
+
+Secrets, raw tickets and cookies are excluded from application access logs.
+The service has one slot, 2 CPU/3 GiB memory limits, a five-second lifecycle loop
+and a sampled 5 GiB disk usage cutoff. This is a trusted-tester POC on a shared
+kernel. See the [deployment report](../../docs/DEPLOYMENT.md) for observed checks
+and remaining limitations.

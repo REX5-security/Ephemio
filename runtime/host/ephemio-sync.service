@@ -1,0 +1,16 @@
+[Unit]
+Description=Ephemio portal reconciliation
+After=ephemio-worker.service network-online.target
+Requires=ephemio-worker.service
+[Service]
+User=ephemio
+Group=ephemio
+ExecStart=/opt/ephemio-venv/bin/python /opt/ephemio/service.py sync
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+[Install]
+WantedBy=multi-user.target

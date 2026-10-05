@@ -1,0 +1,6 @@
+[Unit]
+Description=Ephemio expiry fallback
+After=docker.service
+[Service]
+Type=oneshot
+ExecStart=/opt/ephemio-venv/bin/python /opt/ephemio/service.py sweep

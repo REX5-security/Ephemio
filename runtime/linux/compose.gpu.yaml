@@ -1,0 +1,5 @@
+# Optional Intel/AMD acceleration; requires /dev/dri on the Linux host.
+services:
+  desktop:
+    devices:
+      - /dev/dri:/dev/dri

@@ -1,0 +1,23 @@
+services:
+  desktop:
+    image: ${EPHEMIO_DESKTOP_IMAGE:-lscr.io/linuxserver/webtop:ubuntu-kde}
+    environment:
+      PUID: ${EPHEMIO_DESKTOP_UID:-1000}
+      PGID: ${EPHEMIO_DESKTOP_GID:-1000}
+      TZ: ${EPHEMIO_DESKTOP_TZ:-Asia/Jerusalem}
+    ports:
+      - "127.0.0.1:${EPHEMIO_DESKTOP_PORT:-3001}:3001"
+    volumes:
+      - home:/config
+    shm_size: "1gb"
+    cpus: ${EPHEMIO_DESKTOP_CPUS:-2}
+    mem_limit: ${EPHEMIO_DESKTOP_MEMORY:-4g}
+    # Expired sessions must not resurrect when the Docker daemon restarts.
+    restart: "no"
+    labels:
+      io.ephemio.role: desktop-prototype
+
+volumes:
+  home:
+    labels:
+      io.ephemio.role: desktop-prototype

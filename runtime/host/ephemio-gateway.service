@@ -1,0 +1,18 @@
+[Unit]
+Description=Ephemio authenticated desktop gateway
+After=ephemio-worker.service
+Requires=ephemio-worker.service
+[Service]
+User=ephemio
+Group=ephemio
+ExecStart=/opt/ephemio-venv/bin/python /opt/ephemio/service.py gateway
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ephemio-gateway
+PrivateTmp=true
+UMask=0077
+[Install]
+WantedBy=multi-user.target

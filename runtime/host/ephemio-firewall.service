@@ -1,0 +1,11 @@
+[Unit]
+Description=Ephemio desktop network boundaries
+After=docker.service
+Before=ephemio-worker.service
+Requires=docker.service
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/ephemio/firewall.sh
+RemainAfterExit=true
+[Install]
+WantedBy=multi-user.target

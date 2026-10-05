@@ -1,232 +1,104 @@
 # Ephemio
 
-Disposable computers for AI agents.
+Ephemeral desktops as a service.
 
-[Ephemio](https://ephemio.com/) gives a computer-using LLM a fresh, short-lived workspace for browser automation, code execution, file processing, and Linux desktop tasks. Every workload has an explicit lifetime and control owner, and its workspace is destroyed when the workload terminates.
+The Ephemio POC lets invited users launch a fresh Linux desktop in their browser,
+use it for a limited session, and discard it when they are done. Files, browser state,
+and installed software belong to that session. Users download anything they
+want to keep before the desktop expires.
 
-Ephemio is designed for agents that need to use a computer—not for hosting an agent's model or reasoning loop.
+## Product direction
 
-> **Private beta:** The API shown here is a preview. Access, runtime capacity, endpoint details, and pricing may change. A workload reaching `requested` means the control plane accepted it; execution begins only when a runtime worker is connected.
+The core experience is a temporary personal desktop:
 
-## Why give an agent a disposable workspace?
+1. Sign in and choose a desktop and session duration.
+2. Launch a fresh environment and open it in the browser.
+3. Use its browser, applications, terminal, audio, and file transfer.
+4. Reconnect to the same desktop while the session remains active.
+5. End the session explicitly or let its time limit expire.
+6. Remove the desktop and its session storage, and confirm cleanup.
 
-- **Start clean:** each task begins without cookies, files, credentials, or state left by another task.
-- **Combine tools:** browse the web, run programs, transform files, and use a graphical desktop inside one workload.
-- **Bound the task:** duration, idle policy, resource use, and a two-hour hard limit are enforced outside the guest.
-- **Hand off safely:** an agent can request human help, pause its own input, and resume after the human returns control.
-- **Clean up by default:** success, failure, cancellation, and expiry all pass through destructive cleanup.
-- **Retry safely:** mutating API requests use idempotency keys, so an agent can retry after a timeout without creating duplicate work.
+Closing a browser tab disconnects the viewer; it does not immediately destroy
+an active session. The service must keep showing the expiry time and enforce
+it on the server, even if the user disconnects. The POC offers 15, 30, or 60
+minutes. Idle timeout, resource tiers, and pricing remain to be decided.
 
-## Example use cases
+The previous AI-agent workspace concept and its preview workload API are
+retired from this repository. They are not the specification for this service.
 
-### Autonomous browser work
+## Current implementation
 
-Give an agent a clean browser to navigate a site, fill forms, collect visible information, and save a screenshot or downloaded result as an artifact. This is useful for QA checks, repetitive back-office workflows, public-data collection, and research tasks that require interaction rather than a simple HTTP request.
+| Component | Status |
+| --- | --- |
+| Ubuntu KDE desktop and browser streaming | Supplied by LinuxServer Webtop, also used by the sibling PDWSLC project |
+| Native Linux deployment | Docker Compose prototype with CPU/RAM limits and local HTTPS access |
+| Optional Intel/AMD GPU access | Compose overlay supplied; hardware validation pending |
+| Customer dashboard and sign-in | Deployed on Hostinger; invited accounts, setup/reset mail and login |
+| Session provisioning, expiry, and verified cleanup | Implemented on host-0002 with a durable worker and fallback timer |
+| Authenticated desktop gateway | Deployed with expiring tickets, browser grants and stream revocation |
+| Customer isolation | POC bridge filtering and container limits; public multi-tenant isolation pending |
+| Usage accounting and billing | Planned |
 
-### Isolated code and file processing
+The hosted POC is at [ephemio.com](https://ephemio.com/). The first host admits
+one desktop at a time. Browser streaming, audio signal delivery, keyboard input,
+clipboard, file transfer, grant renewal and logout revocation have been checked.
+See the [deployment report](docs/DEPLOYMENT.md) and [host service](runtime/host/README.md).
+Concurrent capacity and subjective video/audio smoothness require further measurement.
 
-Upload input files, run a command as an argument vector, inspect the result, and export selected outputs. Examples include converting documents, analyzing a repository, generating reports, validating data, and running untrusted build steps in an environment intended to be discarded.
+## Try the desktop prototype
 
-### Mixed browser and local-tool workflows
+On a Linux host with Docker Engine and Docker Compose v2:
 
-Use a browser and local programs against the same ephemeral filesystem. An agent can download a dataset, process it with Python or PHP, open the generated report in the browser, and export only the final artifact.
+```bash
+cd runtime/linux
+docker compose -p ephemio-desktop-test up -d
+```
 
-### Human fallback for GUI tasks
+Open `https://localhost:3001` on that host. For remote access, use the SSH tunnel
+in the [Linux runtime guide](runtime/linux/README.md). The prototype binds to
+loopback and does not implement customer authentication or automatic expiry.
 
-Launch a desktop with `autonomous_with_fallback`. If the agent encounters a CAPTCHA, ambiguous approval, or unfamiliar GUI state, it can request intervention. Ephemio pauses agent input, gives the authorized human a short-lived Guacamole connection, and returns control to the agent only after an explicit resume.
+When finished, remove the test desktop and its home storage:
 
-### Reproducible software checks
+```bash
+docker compose -p ephemio-desktop-test down --volumes
+```
 
-Run installation, build, lint, and test commands in a fresh environment. The workspace can be destroyed afterward, reducing the risk that cached dependencies or previous runs influence the result.
+## Service architecture
 
-## API at a glance
+Webtop supplies the desktop and streaming. The Ephemio POC supplies the surrounding
+service: accounts, launch/reconnect/end controls, session lifetimes, access
+routing, resource allocation, and cleanup. Usage accounting is a later milestone.
 
-The preview API lives at:
+The initial target is one Ubuntu KDE desktop option on a native Linux host.
+The PHP portal allocates a separate environment and storage for each session.
+An authenticated HTTPS gateway routes each tester to their own active desktop.
+The host worker provisions environments and enforces expiry independently of
+the browser connection. The host registry supports additional configured hosts.
+
+Session lifecycle:
 
 ```text
-https://ephemio.com/api/v1
+requested -> provisioning -> active -> deleting -> deleted
 ```
 
-Authenticate with a scoped bearer credential:
+Provisioning failures also enter cleanup. `deleted` means the environment and
+its session storage have been observed removed. Failed cleanup must remain
+visible and be retried after worker or host restarts. Access must be revoked
+when a session ends, even if storage cleanup is still in progress.
 
-```http
-Authorization: Bearer eph_...
-```
+Before public customer access, the service needs an isolation design for
+untrusted desktop users, tenant network separation, resource and disk quotas,
+and tested cleanup behavior. The current Docker Compose setup is a host
+evaluation tool and does not establish those guarantees.
 
-Available scopes are `workloads:read`, `workloads:write`, and `workloads:intervene`. Keep credentials out of prompts, source control, command output, and artifacts.
+## Next milestones
 
-### 1. Create a workload
+The [POC implementation plan](docs/POC_PLAN.md) and [deployment report](docs/DEPLOYMENT.md)
+record the initial delivery.
 
-```bash
-curl --fail-with-body \
-  --request POST \
-  --header "Authorization: Bearer $EPHEMIO_API_TOKEN" \
-  --header "Idempotency-Key: research-2026-08-14-create" \
-  --header "Content-Type: application/json" \
-  --data '{
-    "profile": "browser",
-    "execution_policy": "autonomous",
-    "requested_seconds": 900,
-    "idle_policy": "15"
-  }' \
-  https://ephemio.com/api/v1/workloads
-```
-
-Profiles:
-
-| Profile | Intended capabilities |
-| --- | --- |
-| `browser` | Headless browser actions plus shared files and commands |
-| `code` | Commands, files, and artifact export |
-| `desktop` | Graphical Linux desktop and optional human takeover |
-
-Execution policies:
-
-| Policy | Behavior |
-| --- | --- |
-| `autonomous` | Agent retains control; human takeover is disabled |
-| `supervised` | Human observation or control is expected |
-| `autonomous_with_fallback` | Agent runs normally and may explicitly request help |
-
-Save the returned `workload.public_id`. Never infer readiness from the creation response; poll until `workload.state` is `running`.
-
-### 2. Inspect the workload
-
-```bash
-curl --fail-with-body \
-  --header "Authorization: Bearer $EPHEMIO_API_TOKEN" \
-  "https://ephemio.com/api/v1/workloads/$WORKLOAD_ID"
-```
-
-Normal lifecycle:
-
-```text
-requested -> reserved -> provisioning -> ready -> running
-running -> stopping -> terminated
-```
-
-`terminated` is final and means runtime destruction has been observed. Do not treat `stopping` as cleanup completion.
-
-### 3. Use the workspace
-
-Write a file:
-
-```bash
-curl --fail-with-body \
-  --request POST \
-  --header "Authorization: Bearer $EPHEMIO_API_TOKEN" \
-  --header "Content-Type: application/json" \
-  --data '{"path":"/input.txt","contents":"hello from an agent","overwrite":false}' \
-  "https://ephemio.com/api/v1/workloads/$WORKLOAD_ID/files/write"
-```
-
-Run a command without a shell:
-
-```bash
-curl --fail-with-body \
-  --request POST \
-  --header "Authorization: Bearer $EPHEMIO_API_TOKEN" \
-  --header "Content-Type: application/json" \
-  --data '{
-    "arguments":["php","-r","echo strtoupper(file_get_contents(\"input.txt\"));"],
-    "working_directory":"/",
-    "timeout_seconds":60
-  }' \
-  "https://ephemio.com/api/v1/workloads/$WORKLOAD_ID/commands"
-```
-
-Drive a browser:
-
-```bash
-curl --fail-with-body \
-  --request POST \
-  --header "Authorization: Bearer $EPHEMIO_API_TOKEN" \
-  --header "Content-Type: application/json" \
-  --data '{
-    "url":"https://example.com/",
-    "actions":[],
-    "screenshot_path":"/example.png",
-    "timeout_seconds":30
-  }' \
-  "https://ephemio.com/api/v1/workloads/$WORKLOAD_ID/browser/actions"
-```
-
-Supported browser action types are `click`, `fill`, `press`, and bounded `wait`. The API intentionally does not accept arbitrary page JavaScript.
-
-Export an artifact:
-
-```bash
-curl --fail-with-body \
-  --request POST \
-  --header "Authorization: Bearer $EPHEMIO_API_TOKEN" \
-  --header "Content-Type: application/json" \
-  --data '{"path":"/example.png","name":"example.png"}' \
-  "https://ephemio.com/api/v1/workloads/$WORKLOAD_ID/artifacts"
-```
-
-### 4. Always terminate
-
-Put cleanup in a `finally` block. Completion and failure both request destruction; neither bypasses it.
-
-```bash
-curl --fail-with-body \
-  --request POST \
-  --header "Authorization: Bearer $EPHEMIO_API_TOKEN" \
-  --header "Idempotency-Key: research-2026-08-14-complete" \
-  --header "Content-Type: application/json" \
-  --data '{"reason":"agent_completed"}' \
-  "https://ephemio.com/api/v1/workloads/$WORKLOAD_ID/complete"
-```
-
-Use `/fail` when the task fails and `/terminate` when it is cancelled. Continue polling until the state becomes `terminated`.
-
-## Instructions for LLM agents
-
-When Ephemio is available as an API tool, follow this operating policy:
-
-1. Choose the narrowest profile that can complete the task.
-2. Use `autonomous_with_fallback` only when human intervention is genuinely useful; otherwise use `autonomous`.
-3. Request the shortest realistic duration and an idle timeout.
-4. Generate a stable, unique idempotency key for every logical mutation and reuse it only when retrying that exact mutation.
-5. Poll workload state with bounded backoff. Start runtime operations only in `running` with `control_owner=agent`.
-6. Pass commands as argument arrays. Never concatenate untrusted values into a shell command.
-7. Keep all task files under the workspace root. Export only outputs the user requested.
-8. Never place API tokens, passwords, session cookies, or private keys in workspace files or artifacts.
-9. If intervention is needed, request it explicitly and stop sending agent input until control returns.
-10. In a `finally` path, complete, fail, or terminate the workload and confirm `terminated`.
-
-A suitable system-prompt fragment is available in [`examples/llm-system-prompt.md`](examples/llm-system-prompt.md).
-
-## More examples
-
-- [`examples/curl-workflow.sh`](examples/curl-workflow.sh) — complete Bash lifecycle with polling and cleanup.
-- [`examples/python_client.py`](examples/python_client.py) — dependency-free Python client and code-workload example.
-- [`examples/llm-tool-schema.json`](examples/llm-tool-schema.json) — compact function schema for an LLM tool wrapper.
-
-## Errors and retries
-
-Errors use a stable JSON shape:
-
-```json
-{
-  "error": {
-    "code": "invalid_state",
-    "message": "Workload transition is not allowed."
-  }
-}
-```
-
-Retry network failures, `429`, and transient `5xx` responses with bounded exponential backoff. Reuse the same idempotency key and identical body when retrying a mutation. Do not retry authorization, scope, validation, or invalid-state errors without changing the underlying request or state.
-
-## Safety and acceptable use
-
-Ephemio is not an anonymity service and is not intended to bypass third-party access controls. Do not use it for phishing, spam, malware, credential attacks, denial of service, unauthorized access, evasion, or unlawful activity. Agents remain responsible for respecting site policies, user authorization, and applicable law.
-
-## Status and access
-
-Ephemio is preparing a private beta. Runtime-backed API access is issued only to authorized testers.
-
-- Product: [ephemio.com](https://ephemio.com/)
-- Beta enquiries: [ephemio.com/contact](https://ephemio.com/contact)
-- API-oriented machine summary: [ephemio.com/llms.txt](https://ephemio.com/llms.txt)
-
+1. Measure sustained video/audio performance and capacity alongside the VPS's
+   inference and RTC workloads.
+2. Add a second host and exercise host selection, draining, and failure handling.
+3. Establish isolation for public customers and hard resource/storage quotas.
+4. Add usage accounting, billing and the initial service offering.

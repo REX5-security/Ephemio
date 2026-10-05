@@ -1,0 +1,15 @@
+[Unit]
+Description=Ephemio desktop lifecycle worker
+After=docker.service network-online.target
+Requires=docker.service
+[Service]
+User=root
+Group=ephemio
+RuntimeDirectory=ephemio
+RuntimeDirectoryMode=0750
+ExecStart=/opt/ephemio-venv/bin/python /opt/ephemio/service.py worker
+Restart=always
+RestartSec=3
+UMask=0007
+[Install]
+WantedBy=multi-user.target
