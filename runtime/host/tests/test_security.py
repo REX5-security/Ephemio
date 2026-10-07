@@ -74,6 +74,26 @@ class WorkerAuthorization(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.client.put('/v1/desktops/' + self.sid, json=payload)).status, 409)
         self.assertEqual(self.worker.db.execute('SELECT COUNT(*) FROM desktops').fetchone()[0], 1)
 
+    async def test_profile_allowlist_and_immutable_selection(self):
+        self.worker.c['profiles'] = {'ubuntu-kde': {'image': 'test-kde', 'process': 'plasmashell'},
+                                     'mint-cinnamon': {'image': 'test-mint', 'process': 'cinnamon'}}
+        sid = secrets.token_hex(16)
+        payload = {'owner': self.owner, 'deadline': self.deadline, 'profile': 'arbitrary/image:latest'}
+        self.assertEqual((await self.client.put('/v1/desktops/' + sid, json=payload)).status, 400)
+        self.assertIsNone(self.worker.get(sid))
+        health = await (await self.client.get('/v1/health')).json()
+        self.assertEqual(set(health['profiles']), {'ubuntu-kde', 'mint-cinnamon'})
+        self.worker.save("UPDATE desktops SET state='deleted' WHERE id=?", (self.sid,))
+        payload['profile'] = 'mint-cinnamon'
+        with patch.object(service, 'memory_available', return_value=8 * service.GIB), patch.object(service.shutil, 'disk_usage') as disk:
+            disk.return_value.free = 40 * service.GIB
+            created = await self.client.put('/v1/desktops/' + sid, json=payload)
+            self.assertEqual(created.status, 202)
+            self.assertEqual((await created.json())['profile'], 'mint-cinnamon')
+            self.assertEqual((await self.client.put('/v1/desktops/' + sid, json=payload)).status, 200)
+            payload['profile'] = 'ubuntu-kde'
+            self.assertEqual((await self.client.put('/v1/desktops/' + sid, json=payload)).status, 409)
+
 
 class GatewaySignatures(unittest.IsolatedAsyncioTestCase):
     async def test_connect_portal_aliases_and_renewal_origin(self):

@@ -88,6 +88,38 @@ home volumes or networks remained. Temporary acceptance accounts were disabled
 and their password hashes removed. No raw connection or signing credentials
 were written into repository files or this report.
 
+## Desktop choices added on 2026-10-07
+
+The dashboard now offers Ubuntu KDE, Ubuntu Desktop (GNOME), Fedora Workstation
+(GNOME), and Linux Mint (Cinnamon). Custom Selkies images were built for the three
+new choices, with immutable image IDs registered on `host-0002`. The exact IDs
+are recorded in [the deployed profile manifest](../runtime/images/deployed-profiles.json).
+Existing portal users and KDE sessions were preserved by additive PHP/MySQL and
+worker SQLite migrations. The host advertises its profiles; launch selection is
+validated against the portal and host allowlists and cannot change mid-session.
+
+Live acceptance checks used a temporary account at the `www` portal. Each new
+profile launched through the dashboard and exchanged its ticket successfully.
+Browser streams, terminal keyboard input, Firefox launch and nonzero browser
+audio from a known guest tone were verified. Ending each session removed its
+container, home volume and network. Six host security tests passed, including
+profile allowlisting and immutable session selection. Fedora uses an experimental
+GNOME 50 Wayland development viewer to bridge into X11 capture; see
+[image notes](../runtime/images/README.md). Its dashboard option is marked
+experimental: it uses the development viewer, and sustained application
+performance remains unmeasured. Firefox startup exceeded the original 512-task
+cap; Fedora now has a bounded 768-task cap, with 512 for the other profiles.
+The final Fedora run used about 1.2 GiB and 559 tasks with Firefox open, and
+passed a reconnect check after closing the tab with Ctrl held down.
+
+The shared host retains its one-desktop limit and existing 2 CPU/3 GiB guest
+limits. Targeted cleanup removed the old Mint diagnostic container, its test
+network, an identified failed Mint build container, and obsolete Ephemio images.
+The root filesystem had 44 GiB available (55% used) after cleanup with all three
+new images installed. No global Docker prune was performed; the other projects'
+containers and images were preserved. Image sizes include shared layers and
+cannot be added to infer total storage use.
+
 ## Backup and source locations
 
 Before resetting the dedicated database and replacing the old deployed files,

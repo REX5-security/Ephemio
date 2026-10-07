@@ -70,6 +70,8 @@ class Worker:
           hash TEXT PRIMARY KEY, desktop TEXT NOT NULL, login TEXT NOT NULL, expires INTEGER NOT NULL);
         ''')
         self.db.commit()
+        if 'profile' not in {r['name'] for r in self.db.execute('PRAGMA table_info(desktops)')}:
+            self.save("ALTER TABLE desktops ADD COLUMN profile TEXT NOT NULL DEFAULT 'ubuntu-kde'")
         self.ready = False
         self.lock = asyncio.Lock()
         self.last_usage = 0
@@ -82,7 +84,10 @@ class Worker:
         self.db.commit()
 
     def public(self, row):
-        return {key: row[key] for key in ('id', 'owner', 'deadline', 'state', 'reason')}
+        return {key: row[key] for key in ('id', 'owner', 'deadline', 'state', 'reason', 'profile')}
+
+    def profiles(self):
+        return self.c.get('profiles', {'ubuntu-kde': {'image': self.c.get('image', ''), 'process': 'plasmashell'}})
 
     def active(self, row):
         return self.ready and row and row['state'] == 'active' and row['deadline'] > time.time()
@@ -93,6 +98,7 @@ class Worker:
         if path == '/v1/health':
             count = self.db.execute("SELECT COUNT(*) FROM desktops WHERE state!='deleted'").fetchone()[0]
             return web.json_response({'host_id': self.c['host_id'], 'ready': self.ready, 'slots': self.c['slots'], 'used': count,
+                                      'profiles': list(self.profiles()),
                                       'memory_available': memory_available(), 'disk_available': shutil.disk_usage(self.c['state']).free})
         if path == '/v1/snapshot':
             return web.json_response([self.public(r) for r in self.db.execute('SELECT * FROM desktops')])
@@ -135,12 +141,15 @@ class Worker:
             return web.json_response({'ticket': token, 'connect_url': self.c['host_url'] + '/connect'})
         if request.method == 'PUT':
             owner, deadline = data.get('owner', ''), data.get('deadline', 0)
+            profile = data.get('profile', 'ubuntu-kde')
             if not ID.fullmatch(str(owner)) or type(deadline) is not int:
                 raise web.HTTPBadRequest()
             if row:
-                if row['owner'] != owner or row['deadline'] != deadline:
+                if row['owner'] != owner or row['deadline'] != deadline or row['profile'] != profile:
                     raise web.HTTPConflict(text='Session specification differs from original request.')
                 return web.json_response(self.public(row))
+            if not isinstance(profile, str) or profile not in self.profiles():
+                raise web.HTTPBadRequest(text='Unknown desktop profile.')
             if not self.ready:
                 raise web.HTTPServiceUnavailable(text='Host is recovering.')
             if not (time.time() < deadline <= time.time() + 3600):
@@ -148,14 +157,14 @@ class Worker:
             count = self.db.execute("SELECT COUNT(*) FROM desktops WHERE state!='deleted'").fetchone()[0]
             if count >= self.c['slots'] or memory_available() < 5 * GIB or shutil.disk_usage(self.c['state']).free < 20 * GIB:
                 raise web.HTTPConflict(text='Host has no desktop capacity.')
-            self.save('INSERT INTO desktops(id,owner,deadline,state,created) VALUES (?,?,?,?,?)',
-                      (sid, owner, deadline, 'provisioning', int(time.time())))
+            self.save('INSERT INTO desktops(id,owner,deadline,state,created,profile) VALUES (?,?,?,?,?,?)',
+                      (sid, owner, deadline, 'provisioning', int(time.time()), profile))
             return web.json_response(self.public(self.get(sid)), status=202)
         if request.method == 'DELETE':
             if not row:
                 # Persist a tombstone to fence off an earlier delayed creation.
-                self.save('INSERT INTO desktops(id,owner,deadline,state,created,reason) VALUES (?,?,?,?,?,?)',
-                          (sid, data.get('owner', ''), data.get('deadline', 0), 'deleted', int(time.time()), 'ended'))
+                self.save('INSERT INTO desktops(id,owner,deadline,state,created,reason,profile) VALUES (?,?,?,?,?,?,?)',
+                          (sid, data.get('owner', ''), data.get('deadline', 0), 'deleted', int(time.time()), 'ended', str(data.get('profile', 'ubuntu-kde'))))
             elif row['state'] != 'deleted':
                 self.save("UPDATE desktops SET state='deleting',reason='ended' WHERE id=?", (sid,))
             return web.json_response(self.public(self.get(sid)))
@@ -193,6 +202,7 @@ class Worker:
 
     async def provision(self, row):
         sid = row['id']
+        profile = self.profiles()[row['profile']]
         name = 'ephemio-' + sid
         if not await self.inspect('network', name):
             await command('docker', 'network', 'create', '--label', LABEL, '--label', 'io.ephemio.session=' + sid,
@@ -205,13 +215,13 @@ class Worker:
                 return
             await command('docker', 'run', '-d', '--name', name, '--label', LABEL, '--label', 'io.ephemio.session=' + sid,
                           '--network', name, '--publish', '127.0.0.1::3000', '--mount', 'type=volume,source=' + name + '-home,target=/config',
-                          '--cpus', '2', '--memory', '3g', '--memory-swap', '3g', '--shm-size', '1g', '--pids-limit', '512',
+                          '--cpus', '2', '--memory', '3g', '--memory-swap', '3g', '--shm-size', '1g', '--pids-limit', str(profile.get('pids_limit', 512)),
                           '--restart', 'no', '--log-opt', 'max-size=10m', '--log-opt', 'max-file=2',
                           '--sysctl', 'net.ipv6.conf.all.disable_ipv6=1',
                           '-e', 'PUID=1000', '-e', 'PGID=1000', '-e', 'TZ=Asia/Jerusalem',
                           '-e', 'SUBFOLDER=/desktop/' + sid + '/', '-e', 'SELKIES_MODE=websockets',
                           '-e', 'SELKIES_ENABLE_SHARING=false', '-e', 'SELKIES_ENABLE_COLLAB=false',
-                          '-e', 'AUTO_GPU=false', '-e', 'TITLE=Ephemio desktop', self.c['image'])
+                          '-e', 'AUTO_GPU=false', '-e', 'TITLE=Ephemio desktop', profile['image'])
             obj = await self.inspect('container', name)
         if not obj['State']['Running']:
             raise RuntimeError('Desktop container exited during startup.')
@@ -222,7 +232,7 @@ class Worker:
                 async with client.get(f'http://127.0.0.1:{port}/desktop/{sid}/') as resp:
                     if resp.status != 200:
                         return
-            code, _ = await command('docker', 'exec', name, 'pgrep', '-x', 'plasmashell', optional=True, timeout=5)
+            code, _ = await command('docker', 'exec', name, 'pgrep', '-x', profile['process'], optional=True, timeout=5)
             if code == 0:
                 self.save("UPDATE desktops SET state='active' WHERE id=? AND state='provisioning' AND deadline>?", (sid, int(time.time())))
                 LOG.info('Desktop %s ready', sid)
@@ -435,7 +445,7 @@ async def sync_loop(config):
                 for operation in work['operations']:
                     method = 'DELETE' if operation['desired'] == 'deleted' else 'PUT'
                     async with local.request(method, 'http://worker/v1/desktops/' + operation['id'],
-                                             json={'owner': operation['owner'], 'deadline': int(operation['deadline'])}) as resp:
+                                             json={'owner': operation['owner'], 'deadline': int(operation['deadline']), 'profile': operation.get('profile', 'ubuntu-kde')}) as resp:
                         if resp.status >= 500:
                             LOG.warning('Session synchronization deferred')
                 for login in work['revocations']:

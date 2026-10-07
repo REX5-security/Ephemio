@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+  <focus><focusNew>yes</focusNew><followMouse>no</followMouse></focus>
+  <applications><application class="*"><decor>no</decor><fullscreen>yes</fullscreen><focus>yes</focus></application></applications>
+</openbox_config>

@@ -1,0 +1,58 @@
+# Desktop images
+
+The portal offers Ubuntu KDE, Ubuntu Desktop (GNOME), Fedora Workstation
+(GNOME), and Linux Mint (Cinnamon). KDE uses the pinned LinuxServer Webtop image;
+the other three use these custom images built on pinned LinuxServer Selkies bases.
+They contain desktop environments and applications, rather than full installer
+ISOs or virtual machines. All use the existing authenticated browser gateway.
+
+Build on the desktop host from this directory:
+
+```bash
+docker build -t ephemio/ubuntu-gnome:VERSION ubuntu-gnome/
+docker build -t ephemio/fedora-gnome:VERSION fedora-gnome/
+docker build -t ephemio/mint-cinnamon:VERSION mint-cinnamon/
+docker image inspect ephemio/ubuntu-gnome:VERSION --format '{{.Id}}'
+```
+
+Register each tested image's immutable ID in `/etc/ephemio/config.json` under
+`profiles`; see [host operations](../host/README.md). Build tags are convenient
+names; the worker runs immutable image IDs. Package repositories change, so
+rebuilding a Dockerfile can produce a different image even with a pinned base.
+Test a rebuilt image before replacing its configured ID.
+
+Ubuntu uses Noble's GNOME 46, Ubuntu Dock and Yaru with Mozilla's native Firefox
+package. Mint uses signed Zena packages on its Noble base, Cinnamon 6.6 and Mint
+themes. The included Mint keyring package has SHA-256
+`b71be690c543112ea7b65f43e9bbce9a3f17dd5cc784074858f0824154942a99`.
+
+Fedora uses Fedora 44 and GNOME 50. GNOME 50's Wayland session runs through
+Mutter's development viewer, displayed full screen inside the Selkies X11
+capture session. PipeWire rules classify its video stream for WirePlumber.
+The GTK viewer uses Cairo rendering and activates its window at startup to
+avoid rendering and input-focus problems observed on this CPU-only host.
+Mesa software rendering is limited to two threads to fit the guest CPU and
+process limits, including when Firefox starts.
+Keyboard events go directly to a private GNOME remote-desktop session through
+a mode-0600 Unix socket in the guest. The pinned Selkies keyboard dispatch is
+patched at build time; assertions reject an unexpected upstream implementation.
+Disconnect and blur release held keys. The host waits for the initialized
+`ephemio-input` process before marking this profile ready.
+The Fedora s6 dependency order starts GNOME and its input socket before Selkies.
+Browser acceptance checks wait for GNOME's overview to open before typing into
+search; opening the overview and immediately typing can lose the first keys.
+This is an experimental container adaptation; the base retains Fedora's
+Container Image identity in `/etc/os-release`.
+Firefox startup exceeded a 512-task cap during acceptance, so this profile uses
+a bounded 768-task cap. CPU and memory limits remain 2 CPUs and 3 GiB.
+Sustained application performance still needs measurement on this profile.
+
+Desktop sessions disable screen locking and idle suspension; access is governed
+by portal credentials, short-lived browser grants and the session deadline.
+Audio plays through the browser from the container's virtual audio sink.
+
+Images share layers. `docker images` sizes cannot be added to determine disk
+usage. Inspect `df -h /` and `docker system df -v`. On a shared host, remove only
+identified Ephemio test containers and obsolete image IDs. Do not run global
+prune commands. Keep configured images and enough space for rebuilds and guest
+data; admission currently requires at least 20 GiB free.

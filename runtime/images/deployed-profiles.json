@@ -1,0 +1,23 @@
+{
+  "host": "host-0002",
+  "date": "2026-10-07",
+  "profiles": {
+    "ubuntu-kde": {
+      "image": "lscr.io/linuxserver/webtop@sha256:22a6eb6e798abbbac3faed236dfb140b1451051b59fc58fd21eea097d1497ab9",
+      "process": "plasmashell"
+    },
+    "ubuntu-gnome": {
+      "image": "sha256:ea3be0265a775ea486d51ccd65636b4e225b5567ec3b31b801fa36851ea41d51",
+      "process": "gnome-shell"
+    },
+    "fedora-gnome": {
+      "image": "sha256:f4c08ec1a982bbaf9c10eb0bc9e12e8b91096633812fc5740cf1ecc060343190",
+      "process": "ephemio-input",
+      "pids_limit": 768
+    },
+    "mint-cinnamon": {
+      "image": "sha256:cf63632421dd3e5bb04716e1b964b07eb37598d1d2509e5374f9172059347618",
+      "process": "cinnamon"
+    }
+  }
+}

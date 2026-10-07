@@ -21,6 +21,12 @@ Private configuration lives at `/etc/ephemio/config.json` (root:ephemio, mode 06
   "portal_origins": ["https://ephemio.com", "https://www.ephemio.com"],
   "signing_key": "GENERATE_A_SEPARATE_RANDOM_SECRET_FOR_EACH_HOST",
   "image": "lscr.io/linuxserver/webtop@sha256:TESTED_DIGEST",
+  "profiles": {
+    "ubuntu-kde": {"image": "lscr.io/linuxserver/webtop@sha256:TESTED_DIGEST", "process": "plasmashell"},
+    "ubuntu-gnome": {"image": "sha256:TESTED_IMAGE_ID", "process": "gnome-shell"},
+    "fedora-gnome": {"image": "sha256:TESTED_IMAGE_ID", "process": "ephemio-input", "pids_limit": 768},
+    "mint-cinnamon": {"image": "sha256:TESTED_IMAGE_ID", "process": "cinnamon"}
+  },
   "state": "/var/lib/ephemio",
   "gateway_state": "/var/lib/ephemio-gateway",
   "socket": "/run/ephemio/worker.sock",
@@ -32,6 +38,15 @@ Private configuration lives at `/etc/ephemio/config.json` (root:ephemio, mode 06
 The gateway has no Docker socket. Its Unix socket access is restricted to the
 `ephemio` group. The worker has Docker/host privileges; customers never receive
 host SSH credentials or access to these files.
+
+Build and test the [custom images](../images/README.md) before registering their
+immutable IDs. Health responses advertise the configured profile IDs, which the
+portal uses when choosing a host. A session's profile is immutable. Existing
+SQLite sessions migrate to `ubuntu-kde`; a host without `profiles` retains the
+legacy KDE-only behavior. The portal deployment migrates its database without
+resetting accounts or session history.
+Profiles default to a 512-task cap. Fedora's GNOME/Firefox startup uses a
+768-task cap; all profiles retain the same 2 CPU and 3 GiB memory limits.
 
 `portal_url` is the backend reconciliation endpoint. `portal_origins` explicitly
 lists browser origins allowed to exchange tickets, including the portal's `www`
